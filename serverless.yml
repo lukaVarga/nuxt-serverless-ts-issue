@@ -1,0 +1,117 @@
+service: nuxt-serverless-ts-issue  # 1. Edit whole service name
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'staging'}
+  region: eu-central-1 # 2. Edit AWS region name
+  deploymentBucket:
+    name: ${self:provider.environment.BUCKET_NAMESPACE}-assets-${opt:stage, 'staging'}
+  environment:
+    NODE_ENV: ${self:custom.ENV.${opt:stage, 'staging'}}
+    BUCKET_NAMESPACE: nuxt-serverless-ts-issue  # 3. Specify a new AWS S3 bucket namespace for bundled assets and static assets (should be unique)
+    ASSETS_BUCKET_NAME: ${self:provider.environment.BUCKET_NAMESPACE}-assets-${opt:stage, 'staging'}
+    STATIC_BUCKET_NAME: ${self:provider.environment.BUCKET_NAMESPACE}-static-${opt:stage, 'staging'}
+    ASSETS_BUCKET_URL: https://s3.${self:provider.region}.amazonaws.com/${self:provider.environment.ASSETS_BUCKET_NAME}
+    STATIC_BUCKET_URL: https://s3.${self:provider.region}.amazonaws.com/${self:provider.environment.STATIC_BUCKET_NAME}
+
+custom:
+  customDomain:
+    domainName: ${opt:stage, 'staging'}.example.com   # 4. Specify a new domain name to be created
+    stage: ${opt:stage, 'staging'}
+    certificateName: '*.example.com'  # 5. Enter the certificate name in AWS Certificate Manager (us-east-1) for https connection
+    createRoute53Record: true
+  s3Sync:
+    - bucketName: ${self:provider.environment.ASSETS_BUCKET_NAME}
+      localDir: .nuxt/dist/client
+    - bucketName: ${self:provider.environment.STATIC_BUCKET_NAME}
+      bucketPrefix: static/
+      localDir: src/static
+  ENV:
+    prod: production
+    staging: staging
+  apigwBinary:
+    types:
+      - '*/*'
+
+package:
+  exclude:
+    - src/**
+    - coverage/**
+    - __tests__/**
+    - .circleci/**
+    - types/**
+    - .idea/**
+  include:
+    - serverless.yml
+    - .env
+    - .env.staging
+    - .env.prod
+    - .nuxt/**
+    - src/static
+
+functions:
+  nuxt:
+    handler: index.nuxt
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors: true
+
+resources:
+  Resources:
+    AssetsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.ASSETS_BUCKET_NAME}
+    AssetsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: AssetsBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement: [
+            {
+              Action: ['s3:GetObject'],
+              Effect: 'Allow',
+              Resource: {
+                Fn::Join: ['', ['arn:aws:s3:::', { Ref: 'AssetsBucket' }, '/*']],
+              },
+              Principal: '*'
+            },
+          ]
+    StaticBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.STATIC_BUCKET_NAME}
+    StaticBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement: [
+            {
+              Action: ['s3:GetObject'],
+              Effect: 'Allow',
+              Resource: {
+                Fn::Join: ['', ['arn:aws:s3:::', { Ref: 'StaticBucket' }, '/*']],
+              },
+              Principal: '*'
+            },
+          ]
+
+plugins:
+  - serverless-apigw-binary
+  - serverless-dotenv-plugin
+  - serverless-s3-sync
+  - serverless-domain-manager
